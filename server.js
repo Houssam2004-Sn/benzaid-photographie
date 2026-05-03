@@ -3,7 +3,7 @@ const cors    = require('cors');
 const dotenv  = require('dotenv');
 const multer  = require('multer');
 const path    = require('path');
-const Database = require('better-sqlite3');
+const sqlite3 = require('sqlite3').verbose();
 
 dotenv.config();
 
@@ -14,29 +14,28 @@ app.use(express.static('public'));
 app.use('/uploads', express.static('uploads'));
 
 // ─── DATABASE ───
-const db = new Database('benzaid.db');
-console.log('✅ SQLite Connected!');
+const db = new sqlite3.Database('./benzaid.db', (err) => {
+  if (err) console.error(err.message);
+  else console.log('✅ SQLite Connected!');
+});
 
-// ─── CREATE TABLES ───
-db.exec(`
-  CREATE TABLE IF NOT EXISTS photos (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    title      TEXT NOT NULL,
-    category   TEXT,
-    price      REAL,
-    filename   TEXT,
-    created_at TEXT DEFAULT (datetime('now'))
-  );
-  CREATE TABLE IF NOT EXISTS orders (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    name        TEXT,
-    email       TEXT,
-    photo_id    INTEGER,
-    total       REAL,
-    created_at  TEXT DEFAULT (datetime('now'))
-  );
-`);
-console.log('✅ Tables OK!');
+db.run(`CREATE TABLE IF NOT EXISTS photos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL,
+  category TEXT,
+  price REAL,
+  filename TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
+
+db.run(`CREATE TABLE IF NOT EXISTS orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT,
+  email TEXT,
+  photo_id INTEGER,
+  total REAL,
+  created_at TEXT DEFAULT (datetime('now'))
+)`);
 
 // ─── MULTER ───
 const storage = multer.diskStorage({
@@ -47,44 +46,56 @@ const upload = multer({ storage });
 
 // ─── ROUTES ───
 
-// GET photos
 app.get('/api/photos', (req, res) => {
-  const photos = db.prepare('SELECT * FROM photos ORDER BY created_at DESC').all();
-  res.json(photos);
+  db.all('SELECT * FROM photos ORDER BY created_at DESC', [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
 });
 
-// POST photo
 app.post('/api/photos', upload.single('photo'), (req, res) => {
   const { title, category, price } = req.body;
   const filename = req.file ? req.file.filename : null;
-  const stmt = db.prepare('INSERT INTO photos (title, category, price, filename) VALUES (?, ?, ?, ?)');
-  const result = stmt.run(title, category, price, filename);
-  res.json({ message: '✅ Photo ajoutée!', id: result.lastInsertRowid });
+  db.run(
+    'INSERT INTO photos (title, category, price, filename) VALUES (?, ?, ?, ?)',
+    [title, category, price, filename],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: '✅ Photo ajoutée!', id: this.lastID });
+    }
+  );
 });
 
-// DELETE photo
 app.delete('/api/photos/:id', (req, res) => {
-  db.prepare('DELETE FROM photos WHERE id = ?').run(req.params.id);
-  res.json({ message: '✅ Photo supprimée!' });
+  db.run('DELETE FROM photos WHERE id = ?', [req.params.id], (err) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ message: '✅ Photo supprimée!' });
+  });
 });
 
-// POST order
 app.post('/api/orders', (req, res) => {
   const { name, email, photo_id, total } = req.body;
-  const stmt = db.prepare('INSERT INTO orders (name, email, photo_id, total) VALUES (?, ?, ?, ?)');
-  const result = stmt.run(name, email, photo_id, total);
-  res.json({ message: '✅ Commande reçue!', id: result.lastInsertRowid });
+  db.run(
+    'INSERT INTO orders (name, email, photo_id, total) VALUES (?, ?, ?, ?)',
+    [name, email, photo_id, total],
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ message: '✅ Commande reçue!', id: this.lastID });
+    }
+  );
 });
 
-// GET orders
 app.get('/api/orders', (req, res) => {
-  const orders = db.prepare(`
-    SELECT o.*, p.title as photo_title 
-    FROM orders o 
-    LEFT JOIN photos p ON o.photo_id = p.id 
-    ORDER BY o.created_at DESC
-  `).all();
-  res.json(orders);
+  db.all(
+    `SELECT o.*, p.title as photo_title 
+     FROM orders o 
+     LEFT JOIN photos p ON o.photo_id = p.id 
+     ORDER BY o.created_at DESC`,
+    [], (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
 });
 
 // ─── START ───
